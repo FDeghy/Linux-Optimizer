@@ -64,6 +64,8 @@ install_dependencies_debian_based() {
   yellow_msg 'Installing Dependencies...'
   echo 
   sleep 0.5
+
+  sed -i 's@/us.@/ir.@g' /etc/apt/sources.list
   
   apt update -q
   apt install -y wget curl sudo jq
