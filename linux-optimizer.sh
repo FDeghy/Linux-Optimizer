@@ -145,7 +145,7 @@ set_timezone() {
     sleep 0.5
 
     get_location_info() {
-        local ip_sources=("https://api.ipify.org" "https://ipv4.ident.me/" "https://ipv4.icanhazip.com")
+        local ip_sources=( "https://ipv4.ident.me/" "https://api.ipify.org" "https://ipv4.icanhazip.com")
         local location_info
 
         for source in "${ip_sources[@]}"; do
