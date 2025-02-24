@@ -68,7 +68,7 @@ install_dependencies_debian_based() {
   sed -i 's@/us.@/ir.@g' /etc/apt/sources.list
   
   apt update -q
-  apt install -y wget curl sudo jq
+  apt install -yq wget curl sudo jq
 
   echo
   green_msg 'Dependencies Installed.'
@@ -117,7 +117,7 @@ fix_etc_hosts(){
 }
 
 
-# Fix DNS Temporarly
+# Fix DNS Temporarily
 fix_dns(){
     echo 
     yellow_msg "Fixing DNS Temporarily."
@@ -129,8 +129,9 @@ fix_dns(){
 
     sed -i '/nameserver/d' $DNS_PATH
 
-    echo "nameserver 1.1.1.2" >> $DNS_PATH
-    echo "nameserver 1.0.0.2" >> $DNS_PATH
+    echo "nameserver 9.9.9.9" >> $DNS_PATH
+    echo "nameserver 149.112.112.112" >> $DNS_PATH
+    echo "nameserver 127.0.0.53" >> $DNS_PATH
 
     green_msg "DNS Fixed Temporarily."
     echo 
