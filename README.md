@@ -12,7 +12,7 @@
     - Check and add 127.0.1.1 and server hostname to `/etc/hosts`.
     
     *Original `hosts` file is backed up at `/etc/hosts.bak`.*
-    - Add `Quad9` DNS servers _`(9.9.9.9, 149.112.112.112)`_ nameservers to `/etc/resolv.conf`.
+    - Add `Cloudflare-Security` DNS servers _`(1.1.1.2, 1.0.0.2)`_ nameservers to `/etc/resolv.conf`.
     
     *Original `dns` file is backed up at `/etc/resolv.conf.bak`.*
 
@@ -50,10 +50,11 @@
     - Swap Size: `2Gb`
 
 
+
 8. Enable `IPv6` Support.
 
-
 9. Optimize the [SYSCTL](https://github.com/FDeghy/Linux-Optimizer/blob/main/files/sysctl.conf) Configs:
+
     - Optimize File System Settings.
     - Optimize Network Core Settings.
     - Optimize `SWAP`.
@@ -68,6 +69,7 @@
 
     
 10. Optimize [SSH](https://github.com/FDeghy/Linux-Optimizer/blob/main/files/sshd_config):
+
     - Disable DNS lookups for connecting clients.
     - Remove less efficient encryption ciphers.
     - Enable and Configure TCP keep-alive messages.
@@ -78,16 +80,18 @@
     *Original file is backed up at `/etc/ssh/sshd_config.bak`.*
    
 
+
 11. Optimize the [System Limits](https://github.com/FDeghy/Linux-Optimizer/blob/main/files/profile):
+
     - Soft and Hard *ulimit* `-c -d -f -i -l -n -q -s -u -v -x` optimizations.
     
     
-12. Optimize `UFW` and open Common Ports:
+11. Optimize `UFW` and open Common Ports:
     - Open Ports `SSH`, `80`, `443`.
     - With `IPv6`, `TCP` & `UDP`.
 
     
-Reboot at the end is Recommended.
+**Reboot at the end is recommended.**
 
 
 ## Prerequisites
