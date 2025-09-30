@@ -358,7 +358,7 @@ fs.file-max = 67108864
 ## ----------------------------------------------------------------
 
 # Specify default queuing discipline for network devices
-net.core.default_qdisc = fq
+net.core.default_qdisc = fq_codel
 
 # Configure maximum network device backlog
 net.core.netdev_max_backlog = 32768
