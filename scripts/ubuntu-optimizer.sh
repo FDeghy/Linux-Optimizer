@@ -481,7 +481,7 @@ vm.min_free_kbytes = 65536
 vm.swappiness = 10
 
 # Set the tendency of the kernel to reclaim memory used for caching of directory and inode objects
-vm.vfs_cache_pressure = 150
+vm.vfs_cache_pressure = 100
 
 
 ## Network Configuration
@@ -513,7 +513,7 @@ kernel.panic = 1
 vm.dirty_ratio = 20
 
 # Strictly limits memory allocation to physical RAM + swap, preventing overcommit and reducing OOM risks.
-vm.overcommit_memory = 1
+vm.overcommit_memory = 0
 
 # Sets overcommit to 100% of RAM when enabled, but ignored here since overcommit_memory = 2 disables it.
 vm.overcommit_ratio = 100
