@@ -364,32 +364,32 @@ net.core.default_qdisc = fq_codel
 net.core.netdev_max_backlog = 32768
 
 # Set maximum socket receive buffer
-net.core.optmem_max = 262144
+net.core.optmem_max = 131072
 
 # Define maximum backlog of pending connections
 net.core.somaxconn = 65536
 
 # Configure maximum TCP receive buffer size
-net.core.rmem_max = 33554432
+net.core.rmem_max = 67108864
 
 # Set default TCP receive buffer size
-net.core.rmem_default = 1048576
+net.core.rmem_default = 262144
 
 # Configure maximum TCP send buffer size
-net.core.wmem_max = 33554432
+net.core.wmem_max = 67108864
 
 # Set default TCP send buffer size
-net.core.wmem_default = 1048576
+net.core.wmem_default = 262144
 
 
 ## TCP settings
 ## ----------------------------------------------------------------
 
 # Define socket receive buffer sizes
-net.ipv4.tcp_rmem = 16384 1048576 33554432
+net.ipv4.tcp_rmem = 4096 87380 33554432
 
 # Specify socket send buffer sizes
-net.ipv4.tcp_wmem = 16384 1048576 33554432
+net.ipv4.tcp_wmem = 4096 65536 33554432
 
 # Set TCP congestion control algorithm to BBR
 net.ipv4.tcp_congestion_control = bbr
@@ -398,29 +398,29 @@ net.ipv4.tcp_congestion_control = bbr
 net.ipv4.tcp_fin_timeout = 15
 
 # Set keepalive time (seconds)
-net.ipv4.tcp_keepalive_time = 1200
+net.ipv4.tcp_keepalive_time = 300
 
 # Configure keepalive probes count and interval
 net.ipv4.tcp_keepalive_probes = 7
 net.ipv4.tcp_keepalive_intvl = 30
 
 # Define maximum orphaned TCP sockets
-net.ipv4.tcp_max_orphans = 819200
+net.ipv4.tcp_max_orphans = 262144
 
 # Set maximum TCP SYN backlog
 net.ipv4.tcp_max_syn_backlog = 65535
 
 # Configure maximum TCP Time Wait buckets
-net.ipv4.tcp_max_tw_buckets = 1440000
+net.ipv4.tcp_max_tw_buckets = 262144
 
 # Define TCP memory limits
-net.ipv4.tcp_mem = 8388608 12582912 33554432
+###net.ipv4.tcp_mem = 8388608 12582912 33554432
 
 # Enable TCP MTU probing
 net.ipv4.tcp_mtu_probing = 1
 
 # Define minimum amount of data in the send buffer before TCP starts sending
-net.ipv4.tcp_notsent_lowat = 32768
+net.ipv4.tcp_notsent_lowat = 16384
 
 # Specify retries for TCP socket to establish connection
 net.ipv4.tcp_retries2 = 8
@@ -434,7 +434,7 @@ net.ipv4.tcp_slow_start_after_idle = 0
 
 # Enable TCP window scaling
 net.ipv4.tcp_window_scaling = 1
-net.ipv4.tcp_adv_win_scale = -2
+net.ipv4.tcp_adv_win_scale = 2
 
 # Enable TCP ECN
 net.ipv4.tcp_ecn = 1
@@ -448,7 +448,7 @@ net.ipv4.tcp_syncookies = 1
 ## ----------------------------------------------------------------
 
 # Define UDP memory limits
-net.ipv4.udp_mem = 8388608 12582912 33554432
+# net.ipv4.udp_mem = 8388608 12582912 33554432
 
 
 ## IPv6 settings
@@ -468,7 +468,7 @@ net.ipv4.udp_mem = 8388608 12582912 33554432
 ## ----------------------------------------------------------------
 
 # Set maximum queue length of UNIX domain sockets
-net.unix.max_dgram_qlen = 256
+net.unix.max_dgram_qlen = 1024
 
 
 ## Virtual memory (VM) settings
