@@ -405,7 +405,7 @@ net.ipv4.tcp_keepalive_probes = 7
 net.ipv4.tcp_keepalive_intvl = 30
 
 # Define maximum orphaned TCP sockets
-net.ipv4.tcp_max_orphans = 262144
+net.ipv4.tcp_max_orphans = 16384
 
 # Set maximum TCP SYN backlog
 net.ipv4.tcp_max_syn_backlog = 65535
