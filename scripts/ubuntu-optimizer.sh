@@ -443,6 +443,7 @@ net.ipv4.tcp_ecn_fallback = 1
 # Enable the use of TCP SYN cookies to help protect against SYN flood attacks
 net.ipv4.tcp_syncookies = 1
 
+net.ipv4.tcp_orphan_retries = 2
 
 ## UDP settings
 ## ----------------------------------------------------------------
