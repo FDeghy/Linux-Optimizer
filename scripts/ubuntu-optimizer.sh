@@ -370,13 +370,13 @@ net.core.optmem_max = 131072
 net.core.somaxconn = 65536
 
 # Configure maximum TCP receive buffer size
-net.core.rmem_max = 67108864
+net.core.rmem_max = 26214400
 
 # Set default TCP receive buffer size
 net.core.rmem_default = 262144
 
 # Configure maximum TCP send buffer size
-net.core.wmem_max = 67108864
+net.core.wmem_max = 26214400
 
 # Set default TCP send buffer size
 net.core.wmem_default = 262144
