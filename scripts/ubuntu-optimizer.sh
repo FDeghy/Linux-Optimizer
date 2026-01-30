@@ -386,10 +386,10 @@ net.core.wmem_default = 262144
 ## ----------------------------------------------------------------
 
 # Define socket receive buffer sizes
-net.ipv4.tcp_rmem = 4096 87380 33554432
+net.ipv4.tcp_rmem = 4096 87380 16777216
 
 # Specify socket send buffer sizes
-net.ipv4.tcp_wmem = 4096 65536 33554432
+net.ipv4.tcp_wmem = 4096 65536 16777216
 
 # Set TCP congestion control algorithm to BBR
 net.ipv4.tcp_congestion_control = bbr
@@ -414,7 +414,7 @@ net.ipv4.tcp_max_syn_backlog = 65535
 net.ipv4.tcp_max_tw_buckets = 262144
 
 # Define TCP memory limits
-###net.ipv4.tcp_mem = 8388608 12582912 33554432
+net.ipv4.tcp_mem = 65536 98304 131072
 
 # Enable TCP MTU probing
 net.ipv4.tcp_mtu_probing = 1
