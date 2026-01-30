@@ -361,22 +361,22 @@ fs.file-max = 67108864
 net.core.default_qdisc = fq_codel
 
 # Configure maximum network device backlog
-net.core.netdev_max_backlog = 32768
+net.core.netdev_max_backlog = 16384
 
 # Set maximum socket receive buffer
-net.core.optmem_max = 131072
+net.core.optmem_max = 65536
 
 # Define maximum backlog of pending connections
-net.core.somaxconn = 65536
+net.core.somaxconn = 8192
 
 # Configure maximum TCP receive buffer size
-net.core.rmem_max = 26214400
+net.core.rmem_max = 20971520
 
 # Set default TCP receive buffer size
 net.core.rmem_default = 262144
 
 # Configure maximum TCP send buffer size
-net.core.wmem_max = 26214400
+net.core.wmem_max = 20971520
 
 # Set default TCP send buffer size
 net.core.wmem_default = 262144
@@ -386,10 +386,10 @@ net.core.wmem_default = 262144
 ## ----------------------------------------------------------------
 
 # Define socket receive buffer sizes
-net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_rmem = 4096 131072 20971520
 
 # Specify socket send buffer sizes
-net.ipv4.tcp_wmem = 4096 32768 16777216
+net.ipv4.tcp_wmem = 4096 65536 20971520
 
 # Set TCP congestion control algorithm to BBR
 net.ipv4.tcp_congestion_control = bbr
@@ -401,20 +401,20 @@ net.ipv4.tcp_fin_timeout = 15
 net.ipv4.tcp_keepalive_time = 300
 
 # Configure keepalive probes count and interval
-net.ipv4.tcp_keepalive_probes = 7
-net.ipv4.tcp_keepalive_intvl = 30
+net.ipv4.tcp_keepalive_probes = 5
+net.ipv4.tcp_keepalive_intvl = 15
 
 # Define maximum orphaned TCP sockets
 net.ipv4.tcp_max_orphans = 16384
 
 # Set maximum TCP SYN backlog
-net.ipv4.tcp_max_syn_backlog = 65535
+net.ipv4.tcp_max_syn_backlog = 8192
 
 # Configure maximum TCP Time Wait buckets
-net.ipv4.tcp_max_tw_buckets = 262144
+net.ipv4.tcp_max_tw_buckets = 100000
 
 # Define TCP memory limits
-net.ipv4.tcp_mem = 65536 98304 131072
+net.ipv4.tcp_mem = 24576 32768 131072
 
 # Enable TCP MTU probing
 net.ipv4.tcp_mtu_probing = 1
@@ -434,7 +434,7 @@ net.ipv4.tcp_slow_start_after_idle = 0
 
 # Enable TCP window scaling
 net.ipv4.tcp_window_scaling = 1
-net.ipv4.tcp_adv_win_scale = 2
+net.ipv4.tcp_adv_win_scale = 1
 
 # Enable TCP ECN
 net.ipv4.tcp_ecn = 1
@@ -444,6 +444,13 @@ net.ipv4.tcp_ecn_fallback = 1
 net.ipv4.tcp_syncookies = 1
 
 net.ipv4.tcp_orphan_retries = 2
+net.ipv4.tcp_synack_retries = 2
+
+# TCP Timestamps (Required for high performance)
+net.ipv4.tcp_timestamps = 1
+
+# Enable TCP Fast Open (Reduces latency for supported clients)
+net.ipv4.tcp_fastopen = 3
 
 ## UDP settings
 ## ----------------------------------------------------------------
@@ -511,7 +518,8 @@ net.ipv4.conf.all.arp_announce = 2
 kernel.panic = 1
 
 # Set dirty page ratio for virtual memory
-vm.dirty_ratio = 20
+vm.dirty_ratio = 10
+vm.dirty_background_ratio = 5
 
 # Strictly limits memory allocation to physical RAM + swap, preventing overcommit and reducing OOM risks.
 vm.overcommit_memory = 0
