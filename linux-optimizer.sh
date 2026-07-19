@@ -60,19 +60,17 @@ sleep 0.5
 
 # Install dependencies
 install_dependencies_debian_based() {
-  echo 
+  echo
   yellow_msg 'Installing Dependencies...'
-  echo 
+  echo
   sleep 0.5
 
-  sed -i 's@/us.@/ir.@g' /etc/apt/sources.list
-  
   apt update -q
   apt install -yq wget curl sudo jq
 
   echo
   green_msg 'Dependencies Installed.'
-  echo 
+  echo
   sleep 0.5
 }
 
@@ -117,73 +115,164 @@ fix_etc_hosts(){
 }
 
 
-# Fix DNS Temporarily
+# Set DNS permanently (locked so systemd-resolved/NetworkManager/netplan/DHCP can't revert it on reboot)
 fix_dns(){
-    echo 
-    yellow_msg "Fixing DNS Temporarily."
+    echo
+    yellow_msg "Setting permanent DNS..."
     sleep 0.5
 
-    cp $DNS_PATH /etc/resolv.conf.bak
-    yellow_msg "Default resolv.conf file saved. Directory: /etc/resolv.conf.bak"
-    sleep 0.5
+    ## Unlock a previous run's immutable file before touching it
+    chattr -i "$DNS_PATH" 2>/dev/null
 
-    sed -i '/nameserver/d' $DNS_PATH
+    if [ -e "$DNS_PATH" ]; then
+        cp "$DNS_PATH" /etc/resolv.conf.bak 2>/dev/null
+        yellow_msg "Default resolv.conf file saved. Directory: /etc/resolv.conf.bak"
+        sleep 0.5
+    fi
 
-    echo "nameserver 1.1.1.2" >> $DNS_PATH
-    echo "nameserver 1.0.0.2" >> $DNS_PATH
-    echo "nameserver 127.0.0.53" >> $DNS_PATH
+    ## Replace whatever resolv.conf is (real file or a symlink to the resolved stub)
+    ## with a plain file, then lock it so nothing can overwrite it after reboot.
+    rm -f "$DNS_PATH"
+    cat > "$DNS_PATH" <<-EOF
+	nameserver 1.1.1.2
+	nameserver 1.0.0.2
+	EOF
 
-    green_msg "DNS Fixed Temporarily."
-    echo 
+    if chattr +i "$DNS_PATH" 2>/dev/null; then
+        green_msg "DNS set permanently (locked with chattr +i)."
+    else
+        yellow_msg "DNS set. (chattr unavailable, file left unlocked, may be overwritten by DHCP/NetworkManager.)"
+    fi
+    echo
     sleep 0.5
 }
 
 
-# Set the server TimeZone to the VPS IP address location.
-set_timezone() {
+# Detect country + timezone from the VPS's public IP, once, with hard timeouts so it can never hang.
+DETECTED_TIMEZONE="UTC"
+DETECTED_COUNTRY=""
+
+pick_majority() {
+    local a="$1" b="$2" c="$3"
+    if [ -n "$a" ] && { [ "$a" == "$b" ] || [ "$a" == "$c" ]; }; then
+        echo "$a"
+    elif [ -n "$b" ] && [ "$b" == "$c" ]; then
+        echo "$b"
+    elif [ -n "$a" ]; then
+        echo "$a"
+    elif [ -n "$b" ]; then
+        echo "$b"
+    else
+        echo "$c"
+    fi
+}
+
+detect_location() {
     echo
-    yellow_msg 'Setting TimeZone based on VPS IP address...'
+    yellow_msg 'Detecting VPS location (country + timezone)...'
     sleep 0.5
 
-    get_location_info() {
-        local ip_sources=( "https://ipv4.ident.me/" "https://api.ipify.org" "https://ipv4.icanhazip.com")
-        local location_info
+    local tmp_dir; tmp_dir=$(mktemp -d)
 
-        for source in "${ip_sources[@]}"; do
-            local ip=$(curl -s "$source")
-            if [ -n "$ip" ]; then
-                location_info=$(curl -s "http://ip-api.com/json/$ip")
-                if [ -n "$location_info" ]; then
-                    echo "$location_info"
-                    return 0
-                fi
-            fi
-        done
+    ## Three independent geolocation providers, auto-detecting our public IP server-side
+    ## (no separate "what's my IP" call needed). Run in parallel, each with its own timeout.
+    ( curl -4 -s --connect-timeout 3 --max-time 6 'http://ip-api.com/json/' > "$tmp_dir/1.json" 2>/dev/null ) &
+    ( curl -4 -s --connect-timeout 3 --max-time 6 'https://ipapi.co/json/' > "$tmp_dir/2.json" 2>/dev/null ) &
+    ( curl -4 -s --connect-timeout 3 --max-time 6 'https://ipwho.is/' > "$tmp_dir/3.json" 2>/dev/null ) &
 
-        red_msg "Error: Failed to fetch location information from known sources. Setting timezone to UTC."
-        sudo timedatectl set-timezone "UTC"
-        return 1
-    }
+    ## Hard overall ceiling: never wait more than 8s total, even if a job ignores its own timeout
+    local waited=0
+    while [ "$waited" -lt 8 ] && [ -n "$(jobs -rp)" ]; do
+        sleep 1
+        waited=$(( waited + 1 ))
+    done
+    kill $(jobs -rp) 2>/dev/null
 
-    # Fetch location information from three sources
-    location_info_1=$(get_location_info)
-    location_info_2=$(get_location_info)
-    location_info_3=$(get_location_info)
+    local tz1 tz2 tz3 cc1 cc2 cc3
+    tz1=$(jq -r '.timezone // empty' "$tmp_dir/1.json" 2>/dev/null)
+    cc1=$(jq -r '.countryCode // empty' "$tmp_dir/1.json" 2>/dev/null)
+    tz2=$(jq -r '.timezone // empty' "$tmp_dir/2.json" 2>/dev/null)
+    cc2=$(jq -r '.country_code // empty' "$tmp_dir/2.json" 2>/dev/null)
+    tz3=$(jq -r '.timezone // empty' "$tmp_dir/3.json" 2>/dev/null)
+    cc3=$(jq -r '.country_code // empty' "$tmp_dir/3.json" 2>/dev/null)
 
-    # Extract timezones from the location information
-    timezones=($(echo "$location_info_1 $location_info_2 $location_info_3" | jq -r '.timezone'))
+    rm -rf "$tmp_dir"
 
-    # Check if at least two timezones are equal
-    if [[ "${timezones[0]}" == "${timezones[1]}" || "${timezones[0]}" == "${timezones[2]}" || "${timezones[1]}" == "${timezones[2]}" ]]; then
-        # Set the timezone based on the first matching pair
-        timezone="${timezones[0]}"
-        sudo timedatectl set-timezone "$timezone"
-        green_msg "Timezone set to $timezone"
+    DETECTED_TIMEZONE=$(pick_majority "$tz1" "$tz2" "$tz3")
+    DETECTED_COUNTRY=$(pick_majority "$cc1" "$cc2" "$cc3")
+    [ -z "$DETECTED_TIMEZONE" ] && DETECTED_TIMEZONE="UTC"
+
+    if [ -n "$DETECTED_COUNTRY" ]; then
+        green_msg "Detected country: $DETECTED_COUNTRY, timezone: $DETECTED_TIMEZONE"
     else
-        red_msg "Error: Failed to fetch consistent location information from known sources. Setting timezone to UTC."
-        sudo timedatectl set-timezone "UTC"
+        red_msg "Could not detect VPS location. Defaulting timezone to UTC, keeping default APT mirror."
+    fi
+    echo
+    sleep 0.5
+}
+
+
+# Set the server TimeZone based on the detected VPS location.
+set_timezone() {
+    echo
+    yellow_msg 'Setting TimeZone...'
+    sleep 0.5
+
+    if timedatectl set-timezone "$DETECTED_TIMEZONE" 2>/dev/null; then
+        green_msg "Timezone set to $DETECTED_TIMEZONE"
+    else
+        red_msg "Unrecognized timezone '$DETECTED_TIMEZONE'. Falling back to UTC."
+        timedatectl set-timezone "UTC"
     fi
 
+    echo
+    sleep 0.5
+}
+
+
+# Point APT at a mirror in the VPS's own country (instead of a hardcoded default), falling back
+# to the current mirror if no country-specific one exists or responds.
+set_apt_mirror() {
+    if [[ "$OS" != "ubuntu" && "$OS" != "debian" ]]; then
+        return
+    fi
+
+    if [ -z "$DETECTED_COUNTRY" ]; then
+        return
+    fi
+
+    echo
+    yellow_msg 'Selecting APT mirror for detected country...'
+    sleep 0.5
+
+    local cc mirror_host
+    cc=$(echo "$DETECTED_COUNTRY" | tr '[:upper:]' '[:lower:]')
+
+    if [ "$OS" == "ubuntu" ]; then
+        mirror_host="${cc}.archive.ubuntu.com"
+    else
+        mirror_host="ftp.${cc}.debian.org"
+    fi
+
+    if ! curl -4 -s --connect-timeout 3 --max-time 6 -o /dev/null "http://${mirror_host}/"; then
+        yellow_msg "No reachable APT mirror for '${cc}'. Keeping default mirror."
+        echo
+        sleep 0.5
+        return
+    fi
+
+    for f in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/debian.sources; do
+        [ -f "$f" ] || continue
+        cp "$f" "${f}.bak"
+        if [ "$OS" == "ubuntu" ]; then
+            sed -i -E "s#https?://([a-z]{2}\.)?archive\.ubuntu\.com#http://${mirror_host}#g" "$f"
+        else
+            sed -i -E "s#https?://(ftp\.[a-z]{2}\.debian\.org|deb\.debian\.org)#http://${mirror_host}#g" "$f"
+        fi
+    done
+
+    apt update -q
+    green_msg "APT mirror set to ${mirror_host}."
     echo
     sleep 0.5
 }
@@ -253,8 +342,16 @@ sleep 0.5
 fix_dns
 sleep 0.5
 
+# Detect country + timezone once, then apply both
+detect_location
+sleep 0.5
+
 # Timezone
 set_timezone
+sleep 0.5
+
+# APT mirror (Ubuntu/Debian only)
+set_apt_mirror
 sleep 0.5
 
 
