@@ -31,6 +31,121 @@ SWAP_PATH="/swapfile"
 SWAP_SIZE=2G
 
 
+# Detect CPU core count & RAM size
+detect_system_resources() {
+    CPU_CORES=$(nproc 2>/dev/null || echo 1)
+    MEM_KB=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
+    MEM_MB=$(( MEM_KB / 1024 ))
+    PAGE_SIZE=$(getconf PAGESIZE 2>/dev/null || echo 4096)
+}
+
+
+# Clamp a value between a min and a max
+clamp() {
+    local val=$1 min=$2 max=$3
+    if   [ "$val" -lt "$min" ]; then echo "$min"
+    elif [ "$val" -gt "$max" ]; then echo "$max"
+    else echo "$val"
+    fi
+}
+
+
+# Compute network & VM tunables scaled to this machine's CPU/RAM
+calculate_network_values() {
+    ## Core socket buffer ceiling: ~1/16 of RAM, clamped 4MiB - 128MiB
+    RMEM_WMEM_MAX=$(clamp $(( MEM_KB * 1024 / 16 )) 4194304 134217728)
+    OPTMEM_MAX=$(clamp $(( RMEM_WMEM_MAX / 256 )) 65536 262144)
+
+    ## Default socket buffers
+    RMEM_DEFAULT=$(clamp $(( RMEM_WMEM_MAX / 128 )) 65536 1048576)
+    WMEM_DEFAULT=$(clamp $(( RMEM_DEFAULT / 2 )) 32768 524288)
+    TCP_RMEM_DEFAULT=$RMEM_DEFAULT
+    TCP_WMEM_DEFAULT=$WMEM_DEFAULT
+
+    ## TCP/UDP memory pressure thresholds, expressed in PAGES (kernel's native unit)
+    MEM_PAGES=$(( MEM_KB * 1024 / PAGE_SIZE ))
+    TCP_MEM_MIN=$(clamp $(( MEM_PAGES / 32 )) 8192 1048576)
+    TCP_MEM_PRESSURE=$(clamp $(( MEM_PAGES / 16 )) 16384 2097152)
+    TCP_MEM_MAX=$(clamp $(( MEM_PAGES / 8 )) 32768 4194304)
+
+    ## Connection queues scale with CPU core count
+    SOMAXCONN=$(clamp $(( CPU_CORES * 4096 )) 4096 65536)
+    NETDEV_BACKLOG=$(clamp $(( CPU_CORES * 8192 )) 16384 131072)
+    TCP_MAX_SYN_BACKLOG=$(clamp $(( CPU_CORES * 4096 )) 8192 65536)
+    TCP_MAX_TW_BUCKETS=$(clamp $(( CPU_CORES * 65536 )) 131072 2000000)
+    TCP_MAX_ORPHANS=$(clamp $(( CPU_CORES * 16384 )) 16384 524288)
+
+    ## Neighbor (ARP) table sizing scales with CPU core count
+    GC_THRESH1=$(clamp $(( CPU_CORES * 512 )) 1024 8192)
+    GC_THRESH2=$(clamp $(( CPU_CORES * 2048 )) 4096 32768)
+    GC_THRESH3=$(clamp $(( CPU_CORES * 4096 )) 8192 65536)
+
+    ## Open file descriptor ceiling: ~1 per 16KB of RAM
+    FS_FILE_MAX=$(clamp $(( MEM_KB / 16 )) 2097152 67108864)
+
+    ## Minimum free memory kept for reclaim pressure: ~1.5% of RAM
+    VM_MIN_FREE_KBYTES=$(clamp $(( MEM_KB * 3 / 200 )) 65536 1048576)
+
+    ## Dirty page writeback thresholds: tighter % on large-RAM boxes, avoids multi-GB flush stalls
+    if   [ "$MEM_MB" -le 4096 ];  then DIRTY_RATIO=15; DIRTY_BG_RATIO=5
+    elif [ "$MEM_MB" -le 16384 ]; then DIRTY_RATIO=10; DIRTY_BG_RATIO=5
+    elif [ "$MEM_MB" -le 65536 ]; then DIRTY_RATIO=5;  DIRTY_BG_RATIO=2
+    else                               DIRTY_RATIO=3;  DIRTY_BG_RATIO=1
+    fi
+
+    ## Minimize swap usage: near-zero swappiness on RAM-rich boxes,
+    ## small floor on tiny boxes so they can still swap under real pressure
+    if [ "$MEM_MB" -le 2048 ]; then SWAPPINESS=10; else SWAPPINESS=1; fi
+}
+
+
+# Pick the best available TCP congestion control + matching qdisc
+select_congestion_control() {
+    modprobe tcp_bbr >/dev/null 2>&1
+    if sysctl net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -q bbr; then
+        CONGESTION_CONTROL="bbr"
+        QDISC="fq"
+    else
+        CONGESTION_CONTROL="cubic"
+        QDISC="fq_codel"
+        yellow_msg 'BBR unavailable on this kernel. Falling back to cubic + fq_codel.'
+    fi
+}
+
+
+# Determine SWAP size: RAM-based, but never above 10% of the disk that holds it
+calculate_swap_size() {
+    ## RAM-based candidate size (kept small since swap is emergency-only here)
+    if   [ "$MEM_MB" -le 2048 ];  then SWAP_SIZE_MB=$(( MEM_MB * 2 ))
+    elif [ "$MEM_MB" -le 8192 ];  then SWAP_SIZE_MB=$MEM_MB
+    elif [ "$MEM_MB" -le 32768 ]; then SWAP_SIZE_MB=$(( MEM_MB / 2 ))
+    else                               SWAP_SIZE_MB=4096
+    fi
+
+    ## Hard cap: swap must never exceed 10% of total disk capacity
+    local swap_dir disk_total_mb disk_cap_mb
+    swap_dir=$(dirname "$SWAP_PATH")
+    disk_total_mb=$(df -Pm "$swap_dir" 2>/dev/null | awk 'NR==2 {print $2}')
+    if [ -n "$disk_total_mb" ] && [ "$disk_total_mb" -gt 0 ]; then
+        disk_cap_mb=$(( disk_total_mb / 10 ))
+        if [ "$SWAP_SIZE_MB" -gt "$disk_cap_mb" ]; then
+            SWAP_SIZE_MB=$disk_cap_mb
+            yellow_msg "SWAP capped at 10% of disk (${disk_total_mb}MB total): ${SWAP_SIZE_MB}MB."
+        fi
+    fi
+
+    ## Guard against a zero-size swapfile on very small disks
+    if [ "$SWAP_SIZE_MB" -lt 64 ]; then
+        SWAP_SIZE_MB=64
+    fi
+
+    SWAP_SIZE="${SWAP_SIZE_MB}M"
+}
+
+
+detect_system_resources
+
+
 # Root
 check_if_running_as_root() {
     ## If you want to run as another user, please modify $EUID to be owned by this user
@@ -135,19 +250,32 @@ enable_packages() {
 
 ## Swap Maker
 swap_maker() {
-    echo 
+    echo
     yellow_msg 'Making SWAP Space...'
-    echo 
+    echo
     sleep 0.5
 
+    ## Skip if swap is already active
+    if [ -n "$(swapon --show 2>/dev/null)" ]; then
+        green_msg 'SWAP already active. Skipping.'
+        echo
+        sleep 0.5
+        return
+    fi
+
+    ## Size SWAP to installed RAM instead of a fixed 2G
+    calculate_swap_size
+    yellow_msg "Sizing SWAP to ${SWAP_SIZE} for ${MEM_MB}MB RAM."
+    echo
+
     ## Make Swap
-    sudo fallocate -l $SWAP_SIZE $SWAP_PATH  ## Allocate size
+    sudo fallocate -l $SWAP_SIZE $SWAP_PATH || sudo dd if=/dev/zero of=$SWAP_PATH bs=1M count=$SWAP_SIZE_MB status=none  ## Allocate size (fallocate can fail on some filesystems)
     sudo chmod 600 $SWAP_PATH                ## Set proper permission
-    sudo mkswap $SWAP_PATH                   ## Setup swap         
+    sudo mkswap $SWAP_PATH                   ## Setup swap
     sudo swapon $SWAP_PATH                   ## Enable swap
     echo "$SWAP_PATH   none    swap    sw    0   0" >> /etc/fstab ## Add to fstab
 
-    echo 
+    echo
     green_msg 'SWAP Created Successfully.'
     echo
     sleep 0.5
@@ -164,10 +292,14 @@ sysctl_optimizations() {
     echo 
     sleep 1
 
-    echo 
+    echo
     yellow_msg 'Optimizing the Network...'
-    echo 
+    echo
     sleep 0.5
+
+    ## Compute values scaled to this machine's CPU/RAM, and pick BBR vs cubic
+    calculate_network_values
+    select_congestion_control
 
     sed -i -e '/fs.file-max/d' \
         -e '/net.core.default_qdisc/d' \
@@ -224,6 +356,27 @@ sysctl_optimizations() {
         -e '/vm.dirty_ratio/d' \
         -e '/vm.overcommit_memory/d' \
         -e '/vm.overcommit_ratio/d' \
+        -e '/vm.dirty_background_ratio/d' \
+        -e '/net.ipv4.ip_local_port_range/d' \
+        -e '/net.ipv4.tcp_tw_reuse/d' \
+        -e '/net.ipv4.tcp_orphan_retries/d' \
+        -e '/net.ipv4.tcp_synack_retries/d' \
+        -e '/net.ipv4.tcp_timestamps/d' \
+        -e '/net.ipv4.tcp_rfc1337/d' \
+        -e '/net.core.netdev_budget/d' \
+        -e '/fs.inotify.max_user_watches/d' \
+        -e '/fs.nr_open/d' \
+        -e '/kernel.pid_max/d' \
+        -e '/net.ipv4.icmp_echo_ignore_broadcasts/d' \
+        -e '/net.ipv4.icmp_ignore_bogus_error_responses/d' \
+        -e '/net.ipv4.conf.all.accept_redirects/d' \
+        -e '/net.ipv4.conf.default.accept_redirects/d' \
+        -e '/net.ipv4.conf.all.secure_redirects/d' \
+        -e '/net.ipv4.conf.all.send_redirects/d' \
+        -e '/net.ipv4.conf.default.send_redirects/d' \
+        -e '/net.ipv6.conf.all.accept_redirects/d' \
+        -e '/net.ipv6.conf.default.accept_redirects/d' \
+        -e '/net.ipv4.conf.all.log_martians/d' \
         -e '/^#/d' \
         -e '/^$/d' \
         "$SYS_PATH"
@@ -246,49 +399,49 @@ cat <<EOF >> "$SYS_PATH"
 ## File system settings
 ## ----------------------------------------------------------------
 
-# Set the maximum number of open file descriptors
-fs.file-max = 67108864
+# Set the maximum number of open file descriptors (scaled to RAM)
+fs.file-max = $FS_FILE_MAX
 
 
 ## Network core settings
 ## ----------------------------------------------------------------
 
 # Specify default queuing discipline for network devices
-net.core.default_qdisc = fq
+net.core.default_qdisc = $QDISC
 
-# Configure maximum network device backlog
-net.core.netdev_max_backlog = 32768
+# Configure maximum network device backlog (scaled to CPU cores)
+net.core.netdev_max_backlog = $NETDEV_BACKLOG
 
 # Set maximum socket receive buffer
-net.core.optmem_max = 262144
+net.core.optmem_max = $OPTMEM_MAX
 
-# Define maximum backlog of pending connections
-net.core.somaxconn = 65536
+# Define maximum backlog of pending connections (scaled to CPU cores)
+net.core.somaxconn = $SOMAXCONN
 
-# Configure maximum TCP receive buffer size
-net.core.rmem_max = 33554432
+# Configure maximum TCP receive buffer size (scaled to RAM)
+net.core.rmem_max = $RMEM_WMEM_MAX
 
 # Set default TCP receive buffer size
-net.core.rmem_default = 1048576
+net.core.rmem_default = $RMEM_DEFAULT
 
-# Configure maximum TCP send buffer size
-net.core.wmem_max = 33554432
+# Configure maximum TCP send buffer size (scaled to RAM)
+net.core.wmem_max = $RMEM_WMEM_MAX
 
 # Set default TCP send buffer size
-net.core.wmem_default = 1048576
+net.core.wmem_default = $WMEM_DEFAULT
 
 
 ## TCP settings
 ## ----------------------------------------------------------------
 
 # Define socket receive buffer sizes
-net.ipv4.tcp_rmem = 16384 1048576 33554432
+net.ipv4.tcp_rmem = 4096 $TCP_RMEM_DEFAULT $RMEM_WMEM_MAX
 
 # Specify socket send buffer sizes
-net.ipv4.tcp_wmem = 16384 1048576 33554432
+net.ipv4.tcp_wmem = 4096 $TCP_WMEM_DEFAULT $RMEM_WMEM_MAX
 
-# Set TCP congestion control algorithm to BBR
-net.ipv4.tcp_congestion_control = bbr
+# Set TCP congestion control algorithm (BBR if kernel supports it, else cubic)
+net.ipv4.tcp_congestion_control = $CONGESTION_CONTROL
 
 # Configure TCP FIN timeout period
 net.ipv4.tcp_fin_timeout = 25
@@ -300,17 +453,17 @@ net.ipv4.tcp_keepalive_time = 1200
 net.ipv4.tcp_keepalive_probes = 7
 net.ipv4.tcp_keepalive_intvl = 30
 
-# Define maximum orphaned TCP sockets
-net.ipv4.tcp_max_orphans = 819200
+# Define maximum orphaned TCP sockets (scaled to CPU cores)
+net.ipv4.tcp_max_orphans = $TCP_MAX_ORPHANS
 
-# Set maximum TCP SYN backlog
-net.ipv4.tcp_max_syn_backlog = 20480
+# Set maximum TCP SYN backlog (scaled to CPU cores)
+net.ipv4.tcp_max_syn_backlog = $TCP_MAX_SYN_BACKLOG
 
-# Configure maximum TCP Time Wait buckets
-net.ipv4.tcp_max_tw_buckets = 1440000
+# Configure maximum TCP Time Wait buckets (scaled to CPU cores)
+net.ipv4.tcp_max_tw_buckets = $TCP_MAX_TW_BUCKETS
 
-# Define TCP memory limits
-net.ipv4.tcp_mem = 65536 1048576 33554432
+# Define TCP memory limits, in pages (scaled to RAM)
+net.ipv4.tcp_mem = $TCP_MEM_MIN $TCP_MEM_PRESSURE $TCP_MEM_MAX
 
 # Enable TCP MTU probing
 net.ipv4.tcp_mtu_probing = 1
@@ -343,8 +496,8 @@ net.ipv4.tcp_syncookies = 1
 ## UDP settings
 ## ----------------------------------------------------------------
 
-# Define UDP memory limits
-net.ipv4.udp_mem = 65536 1048576 33554432
+# Define UDP memory limits, in pages (scaled to RAM)
+net.ipv4.udp_mem = $TCP_MEM_MIN $TCP_MEM_PRESSURE $TCP_MEM_MAX
 
 
 ## IPv6 settings
@@ -370,20 +523,20 @@ net.unix.max_dgram_qlen = 256
 ## Virtual memory (VM) settings
 ## ----------------------------------------------------------------
 
-# Specify minimum free Kbytes at which VM pressure happens
-vm.min_free_kbytes = 65536
+# Specify minimum free Kbytes at which VM pressure happens (scaled to RAM)
+vm.min_free_kbytes = $VM_MIN_FREE_KBYTES
 
-# Define how aggressively swap memory pages are used
-vm.swappiness = 10
+# Define how aggressively swap memory pages are used (minimized: scaled to RAM)
+vm.swappiness = $SWAPPINESS
 
 # Set the tendency of the kernel to reclaim memory used for caching of directory and inode objects
-vm.vfs_cache_pressure = 250
+vm.vfs_cache_pressure = 100
 
 
 ## Network Configuration
 ## ----------------------------------------------------------------
 
-# Configure reverse path filtering
+# Configure reverse path filtering (loose mode: keeps anti-spoof protection, tolerates asymmetric routing)
 net.ipv4.conf.default.rp_filter = 2
 net.ipv4.conf.all.rp_filter = 2
 
@@ -391,10 +544,10 @@ net.ipv4.conf.all.rp_filter = 2
 net.ipv4.conf.all.accept_source_route = 0
 net.ipv4.conf.default.accept_source_route = 0
 
-# Neighbor table settings
-net.ipv4.neigh.default.gc_thresh1 = 512
-net.ipv4.neigh.default.gc_thresh2 = 2048
-net.ipv4.neigh.default.gc_thresh3 = 16384
+# Neighbor table settings (scaled to CPU cores)
+net.ipv4.neigh.default.gc_thresh1 = $GC_THRESH1
+net.ipv4.neigh.default.gc_thresh2 = $GC_THRESH2
+net.ipv4.neigh.default.gc_thresh3 = $GC_THRESH3
 net.ipv4.neigh.default.gc_stale_time = 60
 
 # ARP settings
@@ -405,14 +558,75 @@ net.ipv4.conf.all.arp_announce = 2
 # Kernel panic timeout
 kernel.panic = 1
 
-# Set dirty page ratio for virtual memory
-vm.dirty_ratio = 20
+# Dirty page writeback thresholds (scaled to RAM, avoids multi-GB flush stalls on large-RAM boxes)
+vm.dirty_ratio = $DIRTY_RATIO
+vm.dirty_background_ratio = $DIRTY_BG_RATIO
 
-# Strictly limits memory allocation to physical RAM + swap, preventing overcommit and reducing OOM risks.
-vm.overcommit_memory = 2
+# Heuristic overcommit (kernel default): allows normal fork()/COW behavior without an artificial cap
+vm.overcommit_memory = 0
 
-# Sets overcommit to 100% of RAM when enabled, but ignored here since overcommit_memory = 2 disables it.
+# Only used if overcommit_memory is switched to 2 (strict) later
 vm.overcommit_ratio = 100
+
+
+## Additional TCP tuning
+## ----------------------------------------------------------------
+
+# Widen ephemeral port range for high outbound connection counts
+net.ipv4.ip_local_port_range = 1024 65535
+
+# Reuse TIME_WAIT sockets for new outbound connections
+net.ipv4.tcp_tw_reuse = 1
+
+# Drop dead orphaned / half-open connections faster
+net.ipv4.tcp_orphan_retries = 2
+net.ipv4.tcp_synack_retries = 2
+
+# Keep TCP timestamps on (needed for PAWS and high performance)
+net.ipv4.tcp_timestamps = 1
+
+# Enable TCP Fast Open for both client and server
+net.ipv4.tcp_fastopen = 3
+
+# Protect against TIME_WAIT assassination
+net.ipv4.tcp_rfc1337 = 1
+
+# Raise packet processing budget per NAPI poll
+net.core.netdev_budget = 600
+net.core.netdev_budget_usecs = 4000
+
+
+## File & process limits
+## ----------------------------------------------------------------
+
+# Raise inotify watch ceiling (file watchers, build tools, containers)
+fs.inotify.max_user_watches = 524288
+
+# Raise system-wide max open file descriptor ceiling
+fs.nr_open = 2097152
+
+# Allow a large PID space on high-density servers
+kernel.pid_max = 4194304
+
+
+## Network hardening
+## ----------------------------------------------------------------
+
+# Ignore ICMP broadcast and bogus error responses
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+net.ipv4.icmp_ignore_bogus_error_responses = 1
+
+# Do not accept or send ICMP redirects (host is not a router)
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv4.conf.all.secure_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
+
+# Log packets with impossible (martian) source addresses
+net.ipv4.conf.all.log_martians = 1
 
 ################################################################
 ################################################################
