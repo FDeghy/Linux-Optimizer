@@ -134,15 +134,15 @@ fix_dns(){
     ## with a plain file, then lock it so nothing can overwrite it after reboot.
     rm -f "$DNS_PATH"
     cat > "$DNS_PATH" <<-EOF
-	nameserver 1.1.1.2
-	nameserver 1.0.0.2
+	nameserver 1.1.1.1
+	nameserver 1.0.0.1
 	EOF
 
-    if chattr +i "$DNS_PATH" 2>/dev/null; then
-        green_msg "DNS set permanently (locked with chattr +i)."
-    else
-        yellow_msg "DNS set. (chattr unavailable, file left unlocked, may be overwritten by DHCP/NetworkManager.)"
-    fi
+    #if chattr +i "$DNS_PATH" 2>/dev/null; then
+    #    green_msg "DNS set permanently (locked with chattr +i)."
+    #else
+    #    yellow_msg "DNS set. (chattr unavailable, file left unlocked, may be overwritten by DHCP/NetworkManager.)"
+    #fi
     echo
     sleep 0.5
 }
