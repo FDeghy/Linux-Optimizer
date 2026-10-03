@@ -174,11 +174,11 @@ detect_location() {
 
     local tmp_dir; tmp_dir=$(mktemp -d)
 
-    ## Three independent geolocation providers, auto-detecting our public IP server-side
-    ## (no separate "what's my IP" call needed). Run in parallel, each with its own timeout.
-    ( curl -4 -s --connect-timeout 3 --max-time 6 'http://ip-api.com/json/' > "$tmp_dir/1.json" 2>/dev/null ) &
-    ( curl -4 -s --connect-timeout 3 --max-time 6 'https://ipapi.co/json/' > "$tmp_dir/2.json" 2>/dev/null ) &
-    ( curl -4 -s --connect-timeout 3 --max-time 6 'https://ipwho.is/' > "$tmp_dir/3.json" 2>/dev/null ) &
+    ## Three independent geolocation providers, auto-detecting our public IP server-side.
+    ## Run in parallel, each with its own timeout.
+    ( curl -4 -s --connect-timeout 3 --max-time 6 'https://ipinfo.io/json' > "$tmp_dir/1.json" 2>/dev/null ) &
+    ( curl -4 -s --connect-timeout 3 --max-time 6 'https://get.geojs.io/v1/ip/geo.json' > "$tmp_dir/2.json" 2>/dev/null ) &
+    ( curl -4 -s --connect-timeout 3 --max-time 6 -H 'Accept: application/json' 'https://ifconfig.co/json' > "$tmp_dir/3.json" 2>/dev/null ) &
 
     ## Hard overall ceiling: never wait more than 8s total, even if a job ignores its own timeout
     local waited=0
@@ -189,12 +189,15 @@ detect_location() {
     kill $(jobs -rp) 2>/dev/null
 
     local tz1 tz2 tz3 cc1 cc2 cc3
+    # ipinfo.io:   .country (ISO code), .timezone
     tz1=$(jq -r '.timezone // empty' "$tmp_dir/1.json" 2>/dev/null)
-    cc1=$(jq -r '.countryCode // empty' "$tmp_dir/1.json" 2>/dev/null)
+    cc1=$(jq -r '.country // empty' "$tmp_dir/1.json" 2>/dev/null)
+    # geojs.io:    .country_code, .timezone
     tz2=$(jq -r '.timezone // empty' "$tmp_dir/2.json" 2>/dev/null)
     cc2=$(jq -r '.country_code // empty' "$tmp_dir/2.json" 2>/dev/null)
-    tz3=$(jq -r '.timezone // empty' "$tmp_dir/3.json" 2>/dev/null)
-    cc3=$(jq -r '.country_code // empty' "$tmp_dir/3.json" 2>/dev/null)
+    # ifconfig.co: .country_iso, .time_zone
+    tz3=$(jq -r '.time_zone // empty' "$tmp_dir/3.json" 2>/dev/null)
+    cc3=$(jq -r '.country_iso // empty' "$tmp_dir/3.json" 2>/dev/null)
 
     rm -rf "$tmp_dir"
 
