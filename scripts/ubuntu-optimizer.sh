@@ -640,9 +640,9 @@ vm.vfs_cache_pressure = 100
 ## Network Configuration
 ## ----------------------------------------------------------------
 
-# Configure reverse path filtering (loose mode: keeps anti-spoof protection, tolerates asymmetric routing)
-net.ipv4.conf.default.rp_filter = 2
-net.ipv4.conf.all.rp_filter = 2
+# Configure reverse path filtering
+net.ipv4.conf.default.rp_filter = 0
+net.ipv4.conf.all.rp_filter = 0
 
 # Disable source route acceptance
 net.ipv4.conf.all.accept_source_route = 0
